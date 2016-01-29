@@ -1,0 +1,98 @@
+---
+title: "Practical Machine Learning Project"
+author: "Alex Eller"
+date: "January 22, 2016"
+output:
+  html_document:
+    keep_md: yes
+    fig_height: 5
+    fig_width: 5
+---
+<style type="text/css">
+
+body, td, h1, h2 {
+   font-size: 12px;
+}
+code.r{
+  font-size: 10px;
+}
+pre {
+  font-size: 10px
+}
+</style>
+
+### Overview
+In this project, the goal is to use the data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict/quantify how well they do the exercise.
+
+### Load the training and test data, and scrub the data
+```{r,echo=TRUE, message=FALSE, warning=FALSE}
+library(RCurl)
+library(caret)
+library(doParallel)
+
+fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+x <- getURL(fileUrl)
+pml_training <- read.csv(text = x, na.strings = c("", "NA"))
+
+fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+x <- getURL(fileUrl)
+pml_testing <- read.csv(text = x, na.strings = c("", "NA"))
+```
+
+Clean up the data by removing columns with nearly all/all NA's, and also remove the first columns as they are not relevant to the task at hand (id's, time data...)
+```{r,echo=TRUE}
+noNaTraining <- pml_training[,colSums(is.na(pml_training))<nrow(pml_training)*.97][8:60]
+```
+
+Find and remove columns that are significantly correlated and will not add any additional benefit to the model
+```{r,echo=TRUE}
+set.seed(8675309)
+subset <- subset(noNaTraining, select=-c(classe))
+correlations <- cor(subset)
+highCorrelations <- findCorrelation(abs(correlations),0.90)
+noNaTraining <- noNaTraining[,-highCorrelations]
+```
+
+### Partition training/testing datasets for measuring out of sample error rates.
+```{r,echo=TRUE}
+inTrain = createDataPartition(noNaTraining$classe, p = 0.75, list = FALSE)
+training = noNaTraining[inTrain,]
+testing = noNaTraining[-inTrain,]
+```
+
+### Prep for modeling, tune code for using multiple cores in parallel to speed up processing, also setup for 10 fold cross validation for training the model
+```{r,echo=TRUE}
+cluster <- makeCluster(detectCores() - 1) # leave 1 core for OS
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv",
+                           number = 10,
+                           allowParallel = TRUE)
+```
+
+### Fit the model and stop the cluster to release the cores from service
+```{r,echo=TRUE, message=FALSE, warning=FALSE, cache=TRUE}
+modfit <- train(classe~.,data=training,method="rf",trControl = fitControl)
+stopCluster(cluster)
+```
+
+Check the model
+```{r,echo=TRUE}
+modfit
+```
+
+Check the models stats/cross validation by viewing a confusionMatrix, the accuracy looks good
+```{r,echo=TRUE}
+confusionMatrix.train(modfit)
+```
+
+### Check the out of sample error by viewing a confusion matrix of the prediction
+```{r,echo=TRUE, message=FALSE, warning=FALSE}
+pred <- predict(modfit, testing)
+confusionMatrix(pred, testing$classe)
+```
+
+### Run the prediction on the actual test set to generate the final results for the quiz answers
+```{r,echo=TRUE}
+pred <- predict(modfit, pml_testing)
+pred
+```
